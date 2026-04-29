@@ -4,7 +4,7 @@
 // Our program takes as input
 //     1. a finitely-presented Coxeter group W;
 //     2. a list of generators for a finite index reflection subgroup WK;
-//     3. a representation of W.
+//     3. (optional) a representation of W.
 // It then fully determines the module structure for the
 // equal-rank Lusztig-Vogan category described by this triplet.
 W := CoxeterGroup(GrpMat, "G2");
@@ -341,31 +341,27 @@ function flatten(E, B, basis, action)
 	
 end function;
 
-// Let Q and Q' be two indecomposables in our category.
-// Then Hom^0(Q, Q') is isomorphic to the ground field
-// if Q and Q' are isomorphic and 0 otherwise. This
-// function determines whether the space Hom^0(Q(d), Q')
-// is 0-dimensional. It also returns the grading shift d.
+// Let Q be a new, candidate indecomposable and Q' an
+// indecomposable we have seen previously. This function
+// determines whether Q(d) is isomorphic to Q' for some d.
 function isomorphic(new_basis, new_action, basis, action)
 
 	n := #basis;
 	
-	// Make sure the modules have the same rank.
+	// Let (b_1, ..., b_m) be a basis for Q and
+	// (b_1', ..., b_n') a basis for Q'. First,
+	// make sure m = n.
 	if n ne #new_basis then
 		return false, 0;
 	end if;
 	
-	// If Q is the candidate module and Q'
-	// is the existing module, we want a
-	// degree 0 isomorphism from Q(d) to Q'.
-	// I believe we should only ever have to
-	// consider isomorphisms from Q to Q',
-	// so this is probably unnecessary.
+	// Our candidate may be a grading shift of Q'. We want
+	// an isomorphism in Hom^0(Q(d), Q'), so we look for
+	// some d such that deg(b_i)+d = deg(b_i') for all i.
 	sorted_basis := Sort(basis);
 	sorted_new_basis := Sort(new_basis);
 	d := sorted_basis[1] - sorted_new_basis[1];
 	
-	// Make sure the bases are the same.
 	for i := 1 to n do
 		if sorted_new_basis[i]+d ne sorted_basis[i] then
 			return false, 0;
@@ -422,7 +418,10 @@ function isomorphic(new_basis, new_action, basis, action)
 	end for;
 	
 	// Create the system of equations.
-	S := [];
+	// We find matrices that preserve the actions
+	// and that have an invertible determinant.
+	// We can just force det(M) = 1.
+	S := [Determinant(M) - 1];
 	for i := 1 to #action do
 		S cat:= Eltseq(
 			M*ChangeRing(new_action[i], RR,
@@ -456,10 +455,7 @@ function isomorphic(new_basis, new_action, basis, action)
 	// Solve our system of equations.
 	I := ideal<MR | S>;
 	D := PrimaryDecomposition(I);
-	// We will always have the zero solution.
-	// The existence of any other solution means
-	// that our Hom-space is 1-dimensional.
-	return (#D gt 1 or Dimension(D[1]) ne 0), d;
+	return (#D ne 0), d;
 	
 end function;
 
