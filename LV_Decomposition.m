@@ -477,8 +477,7 @@ function isomorphic(new_basis, new_action, basis, action)
 	for i := 1 to n do
 		for j := 1 to n do
 			if i eq j then
-				// Diagonals of degree d morphisms are always degree d,
-				// so MR.k - 1 really will be homogeneous of degree 0.
+				// Diagonals of degree d morphisms are always degree d.
 				M[i][j] := MR.k;
 				Append(~diagonal, MR.k);
 				k +:= 1;
