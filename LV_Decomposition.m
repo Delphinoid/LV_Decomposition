@@ -112,17 +112,36 @@ function tensor(k, basis, action)
 		Append(~new_basis, basis[i]+1);
 	end for;
 	
+	// Sort the new basis by homogeneous degree and build
+	// permutation matrices for the action. This is by no
+	// means necessary and I'm not sure if it's worth it,
+	// since we need to sort the bases for the primitive
+	// idempotents anyway. The benefit is that the ideal
+	// in decompose() will be radical, which may be easier
+	// to decompose. If you remove this, you will have to
+	// change the RadicalDecomposition() in decompose()
+	// back to PrimaryDecomposition() instead. You will
+	// also have to add back code for sorting the basis
+	// when the output of decompose() is trivial.
+	p := [1..#new_basis];
+	ParallelSort(~new_basis, ~p);
+	P := PermutationMatrix(R, p);
+	PT := Transpose(P);
+	
 	// Create the new action matrices.
 	for A in action do
-		// Based on how we've constructed our new basis, we have simply
+		// Based on how we originally constructed our
+		// new basis, we would naively have simply
 		//             (  s(A)  0)
 		//     new_A = (d_s(A)  A).
-		Append(~new_action, BlockMatrix(2, 2, [
+		// However, because we have sorted our basis,
+		// we need to conjugate by a permutation.
+		Append(~new_action, P*BlockMatrix(2, 2, [
 			Matrix(n, n, [s(k, A[i][j]) : j in [1..n], i in [1..n]]),
 			ZeroMatrix(R, n, n),
 			Matrix(n, n, [d_s(k, A[i][j]) : j in [1..n], i in [1..n]]),
 			A
-		]));
+		])*PT);
 	end for;
 	
 	return new_basis, new_action;
@@ -130,6 +149,7 @@ function tensor(k, basis, action)
 end function;
 
 // Solve for the idempotents of a given module.
+// Returns a list of bases for the primitive idempotents.
 procedure decompose(basis, action, ~primitives)
 
 	n := #basis;
@@ -168,17 +188,30 @@ procedure decompose(basis, action, ~primitives)
 	// coefficient in MR we're currently up to.
 	M := ZeroMatrix(RR, n);
 	k := 1;
+	// Later on, we can just check if the Groebner
+	// basis is equal to either of these to eliminate
+	// trivial 0-dimensional solutions.
+	groebner_zero := [MR.k : k in [1..num_coeff]];
+	groebner_identity := groebner_zero;
 	for i := 1 to n do
 		for j := 1 to n do
-			degree := M_grading[i][j];
-			if degree ge 0 then
-				terms := MonomialsOfDegree(RR, degree);
-				m_ij := 0;
-				for b := 1 to #terms do
-					m_ij +:= (MR.k) * terms[b];
-					k +:= 1;
-				end for;
-				M[i][j] := m_ij;
+			if i eq j then
+				// Diagonals of degree d morphisms are always degree d,
+				// so MR.k - 1 really will be homogeneous of degree 0.
+				M[i][j] := MR.k;
+				groebner_identity[k] -:= 1;
+				k +:= 1;
+			else
+				degree := M_grading[i][j];
+				if degree ge 0 then
+					terms := MonomialsOfDegree(RR, degree);
+					m_ij := 0;
+					for b := 1 to #terms do
+						m_ij +:= (MR.k) * terms[b];
+						k +:= 1;
+					end for;
+					M[i][j] := m_ij;
+				end if;
 			end if;
 		end for;
 	end for;
@@ -202,13 +235,15 @@ procedure decompose(basis, action, ~primitives)
 	end for;
 
 	// Currently the equations in S live in R. However,
-	// every equation in S should be of the form p = 0,
-	// for some polynomial p that is homogeneous in the
-	// generators of R. Given such an equation, we know
-	// that the coefficients of each monomial term of p
-	// must be 0. We can thus reduce S to a system of
-	// equations in MR, our symbolic ring, by replacing
-	// p = 0 with c_k = 0 for each such coefficient c_k.
+	// observe that the entries p_ij of M^2 - M = M(M - I)
+	// are homogeneous polynomials in the generators of R
+	// if and only if the diagonal of M is of degree 0.
+	// This is precisely the case in our setup. Thus each
+	// such entry m_ij of M^2 - M is zero if and only if
+	// the coefficient c_k^ij of each monomial term in p_ij
+	// is zero. This allows us to reduce S to a system of
+	// equations in our coefficient ring MR by replacing
+	// each equation p_ij = 0 with {c_k^ij = 0}_k.
 	i := 1;
 	while i le #S do
 		if Degree(S[i]) gt 0 then
@@ -221,21 +256,34 @@ procedure decompose(basis, action, ~primitives)
 	end while;
 
 	// Solve our system of equations.
+	// Because our basis is ordered by homogeneous
+	// degree, this ideal will in fact be radical.
 	I := ideal<MR | S>;
-	D := PrimaryDecomposition(I);
+	D := RadicalDecomposition(I);
+	// Build the idempotents array. This consists of pairs
+	// of idempotent matrices E and bases for their images.
 	idempotents := [];
 	for J in D do
 		if Dimension(J) eq 0 then
-			E := ChangeRing(M, R,
-				hom< RR -> R |
-					hom< MR -> Rationals() | VarietySequence(J)[1] >,
-					[R.i : i in [1..Ngens(R)]]
-				>
-			);
-			if E ne ZeroMatrix(R, n) and E ne IdentityMatrix(R, n) then
+			// Performing PrimaryDecomposition invokes a computation of the
+			// Groebner bases. We can reuse the ones it computed for us here
+			// to ensure that this 0-dimensional solution is neither zero nor
+			// the identity before we go ahead and perform VarietySequence.
+			if
+				GroebnerBasis(J) ne groebner_zero and
+				GroebnerBasis(J) ne groebner_identity
+			then
+				// We have a new idempotent.
+				E := ChangeRing(M, R,
+					hom< RR -> R |
+						hom< MR -> Rationals() | VarietySequence(J)[1] >,
+						[R.i : i in [1..Ngens(R)]]
+					>
+				);
 				// Projective modules over polynomial rings are free.
 				// In other words, we can find a basis for the image of E.
 				// The "Image" function in Magma computes the row space.
+				// We save this since we'll also need it when flattening.
 				Append(~idempotents,
 					[* E, MinimalBasis(Image(Transpose(E))) *]
 				);
@@ -243,19 +291,20 @@ procedure decompose(basis, action, ~primitives)
 		else
 			// The only time we should ever have non-zero
 			// dimension is if QB_s splits as Q(-1) + Q(1).
-			I := IdentityMatrix(R, ShiftRight(n, 1));
-			Z := ZeroMatrix(R, Ncols(I));
-			E1 := BlockMatrix(2, 2, [I, Z, Z, Z]);
-			E2 := BlockMatrix(2, 2, [Z, Z, Z, I]);
-			primitives := [
-				[* E1, [E1[i] : i in [1..Ncols(I)]] *],
-				[* E2, [E2[i] : i in [Ncols(I)+1..n]] *]
-			];
+			// This is the one issue with sorting the bases:
+			// this splitting is no longer necessarily given
+			// neatly by the block matrices [[1, 0], [0, 0]]
+			// and [[0, 0], [0, 1]]. Let's just return with
+			// an empty idempotent array to communicate that
+			// we encountered this case.
 			return;
 		end if;
 	end for;
 	
+	// If we found no non-trivial idempotents,
+	// we must be indecomposable.
 	if IsEmpty(idempotents) then
+		primitives := [[]];
 		return;
 	end if;
 	
@@ -269,8 +318,16 @@ procedure decompose(basis, action, ~primitives)
 	
 	// Find the primitive idempotents.
 	// We know the smallest idempotent will be primitive.
+	// Magma is pretty dumb when it comes to universes,
+	// I truly wish this wasn't necessary. Maybe there's
+	// a better way of doing it.
 	total_rank := #idempotents[1][2];
-	primitives := [idempotents[1]];
+	primitive_matrices := [
+		Universe([E[1] : E in idempotents]) | idempotents[1][1]
+	];
+	primitives := [
+		Universe([E[2] : E in idempotents]) | idempotents[1][2]
+	];
 	i := 2;
 	Z := ZeroMatrix(R, n);
 	while total_rank lt n do
@@ -278,14 +335,15 @@ procedure decompose(basis, action, ~primitives)
 		// smallest rank to largest, adding those that are
 		// orthogonal until their ranks add up to n.
 		is_primitive := true;
-		for j := 1 to #primitives do
-			if primitives[j][1]*idempotents[i][1] ne Z then
+		for j := 1 to #primitive_matrices do
+			if primitive_matrices[j]*idempotents[i][1] ne Z then
 				is_primitive := false;
 				break;
 			end if;
 		end for;
 		if is_primitive then
-			Append(~primitives, idempotents[i]);
+			Append(~primitive_matrices, idempotents[i][1]);
+			Append(~primitives, idempotents[i][2]);
 			total_rank +:= #idempotents[i][2];
 		end if;
 		i +:= 1;
@@ -293,9 +351,9 @@ procedure decompose(basis, action, ~primitives)
 	
 end procedure;
 
-// Reduce each rank r idempotent E from an nxn matrix
-// to a graded basis and a list of rxr action matrices.
-function flatten(E, B, basis, action)
+// Reduce each rank r idempotent to a graded
+// basis and a list of rxr action matrices.
+function flatten(B, basis, action)
 	
 	new_basis := [];
 	new_action := [];
@@ -314,6 +372,15 @@ function flatten(E, B, basis, action)
 		// Assuming the basis vector is homogeneous, this is good enough.
 		Append(~new_basis, 2*Degree(b[i])+basis[i]);
 	end for;
+	
+	// Make sure to sort the basis. This forces our matrices
+	// to be triangular when checking for isomorphisms.
+	// Alternatively, we can add an extra isomorphism constraint
+	// later on that forces the determinant to be invertible.
+	// This is necessary even if we sort our basis after
+	// tensoring, as in principle the basis for the image
+	// could be unordered with respect to the new degrees.
+	ParallelSort(~new_basis, ~B);
 	
 	// We want a projection P and an inclusion I such that
 	// P*I = IdentityMatrix(R, #B). Then for each action
@@ -349,21 +416,25 @@ function isomorphic(new_basis, new_action, basis, action)
 	n := #basis;
 	
 	// Let (b_1, ..., b_m) be a basis for Q and
-	// (b_1', ..., b_n') a basis for Q'. First,
-	// make sure m = n.
+	// let (b_1', ..., b_n') be a basis for Q'.
+	// First, make sure m = n.
 	if n ne #new_basis then
 		return false, 0;
 	end if;
 	
-	// Our candidate may be a grading shift of Q'. We want
-	// an isomorphism in Hom^0(Q(d), Q'), so we look for
-	// some d such that deg(b_i)+d = deg(b_i') for all i.
-	sorted_basis := Sort(basis);
-	sorted_new_basis := Sort(new_basis);
-	d := sorted_basis[1] - sorted_new_basis[1];
-	
+	// Our candidate may be a grading shift of Q'. We want an
+	// isomorphism in Hom^0(Q(d), Q'), so we look for some d
+	// such that d + deg(b_i) = deg(b_i') for all i. Because
+	// deg(m_ij) = d + deg(b_j) - deg(b_i'), this means that
+	// the diagonal elements will be degree d = 0 (scalars).
+	// Moreover, because our bases are sorted from smallest
+	// homogeneous degree to largest, we know that (m_ij) will
+	// be upper triangular. Thus we have an isomorphism if and
+	// only if every element on the diagonal is non-zero.
+	d := basis[1] - new_basis[1];
 	for i := 1 to n do
-		if sorted_new_basis[i]+d ne sorted_basis[i] then
+		new_basis[i] +:= d;
+		if new_basis[i] ne basis[i] then
 			return false, 0;
 		end if;
 	end for;
@@ -381,7 +452,7 @@ function isomorphic(new_basis, new_action, basis, action)
 			// require that deg(m_ij) = d + deg(b_j) - deg(b_i'), where
 			// b_i' is a basis for the codomain and b_j is a basis for
 			// the domain. We divide by 2 to get the polynomial degree.
-			degree := ShiftRight(d + new_basis[j] - basis[i], 1);
+			degree := ShiftRight(new_basis[j] - basis[i], 1);
 			Append(~row, degree);
 			if degree ge 0 then
 				// This is the number of monomials of
@@ -402,26 +473,36 @@ function isomorphic(new_basis, new_action, basis, action)
 	// coefficient in MR we're currently up to.
 	M := ZeroMatrix(RR, n);
 	k := 1;
+	diagonal := [];
 	for i := 1 to n do
 		for j := 1 to n do
-			degree := M_grading[i][j];
-			if degree ge 0 then
-				terms := MonomialsOfDegree(RR, degree);
-				m_ij := 0;
-				for b := 1 to #terms do
-					m_ij +:= (MR.k) * terms[b];
-					k +:= 1;
-				end for;
-				M[i][j] := m_ij;
+			if i eq j then
+				// Diagonals of degree d morphisms are always degree d,
+				// so MR.k - 1 really will be homogeneous of degree 0.
+				M[i][j] := MR.k;
+				Append(~diagonal, MR.k);
+				k +:= 1;
+			else
+				degree := M_grading[i][j];
+				if degree ge 0 then
+					terms := MonomialsOfDegree(RR, degree);
+					m_ij := 0;
+					for b := 1 to #terms do
+						m_ij +:= (MR.k) * terms[b];
+						k +:= 1;
+					end for;
+					M[i][j] := m_ij;
+				end if;
 			end if;
 		end for;
 	end for;
 	
 	// Create the system of equations.
-	// We find matrices that preserve the actions
-	// and that have an invertible determinant.
-	// We can just force det(M) = 1.
-	S := [Determinant(M) - 1];
+	// If we wanted, we could add an extra coefficient in
+	// MR and add Determinant(M)-MR.num_coeff as a constraint.
+	// I imagine this would be much slower though, as it would
+	// introduce a non-linear equation into our system.
+	S := [];
 	for i := 1 to #action do
 		S cat:= Eltseq(
 			M*ChangeRing(new_action[i], RR,
@@ -434,13 +515,15 @@ function isomorphic(new_basis, new_action, basis, action)
 	end for;
 
 	// Currently the equations in S live in R. However,
-	// every equation in S should be of the form p = 0,
-	// for some polynomial p that is homogeneous in the
-	// generators of R. Given such an equation, we know
-	// that the coefficients of each monomial term of p
-	// must be 0. We can thus reduce S to a system of
-	// equations in MR, our symbolic ring, by replacing
-	// p = 0 with c_k = 0 for each such coefficient c_k.
+	// observe that the entries p_ij of M^2 - M = M(M - I)
+	// are homogeneous polynomials in the generators of R
+	// if and only if the diagonal of M is of degree 0.
+	// This is precisely the case in our setup. Thus each
+	// such entry m_ij of M^2 - M is zero if and only if
+	// the coefficient c_k^ij of each monomial term in p_ij
+	// is zero. This allows us to reduce S to a system of
+	// equations in our coefficient ring MR by replacing
+	// each equation p_ij = 0 with {c_k^ij = 0}_k.
 	i := 1;
 	while i le #S do
 		if Degree(S[i]) ne 0 then
@@ -453,9 +536,22 @@ function isomorphic(new_basis, new_action, basis, action)
 	end while;
 
 	// Solve our system of equations.
+	// Because we're quotienting by the radical generated
+	// by a system of linear equations, I will be radical.
 	I := ideal<MR | S>;
-	D := PrimaryDecomposition(I);
-	return (#D ne 0), d;
+	D := RadicalDecomposition(I);
+	diagonal := Set(diagonal);
+	for J in D do
+		// Performing PrimaryDecomposition invokes a computation of the
+		// Groebner bases. We can reuse the ones it computed for us here
+		// to check for any invertible solutions (solutions where any
+		// diagonal element is zero). I believe any solution here should
+		// either be zero or invertible, but this isn't much more work.
+		if IsDisjoint(Set(GroebnerBasis(J)), diagonal) then
+			return true, d;
+		end if;
+	end for;
+	return false, 0;
 	
 end function;
 
@@ -571,23 +667,37 @@ function main()
 				);
 				// Decompose Q_{source}*B_{s_k} and
 				// find the primitive idempotents.
+				// This will be an array of pairs of
+				// idempotent matrices with bases for
+				// their images.
 				primitives := [];
 				decompose(basis, action, ~primitives);
 				
 				new_bases := [* *];
 				new_actions := [* *];
 				if IsEmpty(primitives) then
-					// If we only found the trivial idempotents,
+					// Add some splitting edges to
+					// the W-graph and skip s_k.
+					Append(~W_graph, [
+						num_ind[layer]+source, num_ind[layer]+source, k, 1
+					]);
+					Append(~W_graph, [
+						num_ind[layer]+source, num_ind[layer]+source, k, -1
+					]);
+					continue k;
+				elif #primitives eq 1 then
+					// If we only found the identity idempotent,
 					// the current module is indecomposable.
+					// If we choose not to order the basis after
+					// tensoring, we will need to do it here instead.
 					Append(~new_bases, basis);
 					Append(~new_actions, action);
 				else
-					// Reduce our idempotents from nxn matrices to
-					// a graded basis and some rxr action matrices,
-					// where r is their rank.
-					for P in primitives do
+					// Reduce our idempotents to a graded basis and some
+					// rxr action matrices, where r is their rank.
+					for B in primitives do
 						new_basis, new_action := flatten(
-							P[1], P[2], basis, action
+							B, basis, action
 						);
 						Append(~new_bases, new_basis);
 						Append(~new_actions, new_action);
