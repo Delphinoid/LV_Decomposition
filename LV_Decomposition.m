@@ -20,6 +20,11 @@ reflection_basis := [];
 //============//
 // Test Flags //
 //============//
+// A simple exercise is checking that R_xBS(w) is invariant under
+// the right duality functor. As this functor inverts gradings, this
+// tells us that sorting the bases by their degrees will make all
+// morphisms block upper triangular matrices, where each diagonal
+// block consists only of elements that are degree 0 (scalars).
 SORT_BASES := false;
 SAFE := true;
 
