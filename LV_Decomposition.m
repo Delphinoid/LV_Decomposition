@@ -17,6 +17,13 @@ AssignNames(~R, [Sprintf("a_%o", i) : i in [1..Ngens(R)]]);
 reflection_basis := [];
 
 
+//============//
+// Test Flags //
+//============//
+SORT_BASES := false;
+SAFE := true;
+
+
 //==================//
 // Global Variables //
 //==================//
@@ -112,19 +119,12 @@ function tensor(k, basis, action)
 		Append(~new_basis, basis[i]+1);
 	end for;
 	
-	// Sort the new basis by homogeneous degree and build
-	// permutation matrices for the action. This is by no
-	// means necessary and I'm not sure if it's worth it,
-	// since we need to sort the bases for the primitive
-	// idempotents anyway. The benefit is that the ideal
-	// in decompose() will be radical, which may be easier
-	// to decompose. If you remove this, you will have to
-	// change the RadicalDecomposition() in decompose()
-	// back to PrimaryDecomposition() instead. You will
-	// also have to add back code for sorting the basis
-	// when the output of decompose() is trivial.
+	// Sort the new basis by homogeneous degree and
+	// build permutation matrices for the action.
 	p := [1..#new_basis];
-	ParallelSort(~new_basis, ~p);
+	if SORT_BASES then
+		ParallelSort(~new_basis, ~p);
+	end if;
 	P := PermutationMatrix(R, p);
 	PT := Transpose(P);
 	
@@ -234,16 +234,11 @@ procedure decompose(basis, action, ~primitives)
 		);
 	end for;
 
-	// Currently the equations in S live in R. However,
-	// observe that the entries p_ij of M^2 - M = M(M - I)
-	// are homogeneous polynomials in the generators of R
-	// if and only if the diagonal of M is of degree 0.
-	// This is precisely the case in our setup. Thus each
-	// such entry m_ij of M^2 - M is zero if and only if
-	// the coefficient c_k^ij of each monomial term in p_ij
-	// is zero. This allows us to reduce S to a system of
-	// equations in our coefficient ring MR by replacing
-	// each equation p_ij = 0 with {c_k^ij = 0}_k.
+	// Currently, the expressions in S live inside R.
+	// Let p be any such polynomial expression. Clearly
+	// p = 0 if and only if, for all d, the coefficient
+	// of the degree d term is 0. This allows us to
+	// reduce our system to a system of equations in MR.
 	i := 1;
 	while i le #S do
 		if Degree(S[i]) gt 0 then
@@ -256,10 +251,10 @@ procedure decompose(basis, action, ~primitives)
 	end while;
 
 	// Solve our system of equations.
-	// Because our basis is ordered by homogeneous
-	// degree, this ideal will in fact be radical.
+	// I suspect this ideal should always
+	// be radical, but I'm not sure why.
 	I := ideal<MR | S>;
-	D := RadicalDecomposition(I);
+	D := SAFE select PrimaryDecomposition(I) else RadicalDecomposition(I);
 	// Build the idempotents array. This consists of pairs
 	// of idempotent matrices E and bases for their images.
 	idempotents := [];
@@ -289,14 +284,10 @@ procedure decompose(basis, action, ~primitives)
 				);
 			end if;
 		else
-			// The only time we should ever have non-zero
-			// dimension is if QB_s splits as Q(-1) + Q(1).
-			// This is the one issue with sorting the bases:
-			// this splitting is no longer necessarily given
-			// neatly by the block matrices [[1, 0], [0, 0]]
-			// and [[0, 0], [0, 1]]. Let's just return with
-			// an empty idempotent array to communicate that
-			// we encountered this case.
+			// MAJOR ASSUMPTION: The only time we should ever have
+			// non-zero dimension is if QB_s splits as Q(-1) + Q(1).
+			// Let's just return with an empty idempotent array to
+			// communicate that we encountered this case.
 			return;
 		end if;
 	end for;
@@ -304,6 +295,9 @@ procedure decompose(basis, action, ~primitives)
 	// If we found no non-trivial idempotents,
 	// we must be indecomposable.
 	if IsEmpty(idempotents) then
+		// Any module with only a single primitive
+		// idempotent is indecomposable, hence this
+		// trick to make #primitives = 1.
 		primitives := [[]];
 		return;
 	end if;
@@ -373,14 +367,12 @@ function flatten(B, basis, action)
 		Append(~new_basis, 2*Degree(b[i])+basis[i]);
 	end for;
 	
-	// Make sure to sort the basis. This forces our matrices
-	// to be triangular when checking for isomorphisms.
-	// Alternatively, we can add an extra isomorphism constraint
-	// later on that forces the determinant to be invertible.
-	// This is necessary even if we sort our basis after
-	// tensoring, as in principle the basis for the image
-	// could be unordered with respect to the new degrees.
-	ParallelSort(~new_basis, ~B);
+	// In principle computing a basis for the image
+	// of our idempotent will not preserve the order
+	// of the basis, so we need to sort it again here.
+	if SORT_BASES then
+		ParallelSort(~new_basis, ~B);
+	end if;
 	
 	// We want a projection P and an inclusion I such that
 	// P*I = IdentityMatrix(R, #B). Then for each action
@@ -427,14 +419,12 @@ function isomorphic(new_basis, new_action, basis, action)
 	// such that d + deg(b_i) = deg(b_i') for all i. Because
 	// deg(m_ij) = d + deg(b_j) - deg(b_i'), this means that
 	// the diagonal elements will be degree d = 0 (scalars).
-	// Moreover, because our bases are sorted from smallest
-	// homogeneous degree to largest, we know that (m_ij) will
-	// be upper triangular. Thus we have an isomorphism if and
-	// only if every element on the diagonal is non-zero.
-	d := basis[1] - new_basis[1];
+	sorted_new_basis := Sort(new_basis);
+	sorted_basis := Sort(basis);
+	d := sorted_basis[1] - sorted_new_basis[1];
 	for i := 1 to n do
 		new_basis[i] +:= d;
-		if new_basis[i] ne basis[i] then
+		if d+sorted_new_basis[i] ne sorted_basis[i] then
 			return false, 0;
 		end if;
 	end for;
@@ -445,6 +435,9 @@ function isomorphic(new_basis, new_action, basis, action)
 	// We use the latter when initializing the ring MR.
 	M_grading := [];
 	num_coeff := 0;
+	if SAFE then
+		num_coeff := 1;
+	end if;
 	for i := 1 to n do
 		row := [];
 		for j := 1 to n do
@@ -473,35 +466,29 @@ function isomorphic(new_basis, new_action, basis, action)
 	// coefficient in MR we're currently up to.
 	M := ZeroMatrix(RR, n);
 	k := 1;
-	diagonal := [];
+	// Later on, we can just check if the Groebner basis
+	// is equal to this to eliminate the zero solution.
+	groebner_zero := [MR.k : k in [1..num_coeff]];
 	for i := 1 to n do
 		for j := 1 to n do
-			if i eq j then
-				// Diagonals of degree d morphisms are always degree d.
-				M[i][j] := MR.k;
-				Append(~diagonal, MR.k);
-				k +:= 1;
-			else
-				degree := M_grading[i][j];
-				if degree ge 0 then
-					terms := MonomialsOfDegree(RR, degree);
-					m_ij := 0;
-					for b := 1 to #terms do
-						m_ij +:= (MR.k) * terms[b];
-						k +:= 1;
-					end for;
-					M[i][j] := m_ij;
-				end if;
+			degree := M_grading[i][j];
+			if degree ge 0 then
+				terms := MonomialsOfDegree(RR, degree);
+				m_ij := 0;
+				for b := 1 to #terms do
+					m_ij +:= (MR.k) * terms[b];
+					k +:= 1;
+				end for;
+				M[i][j] := m_ij;
 			end if;
 		end for;
 	end for;
 	
 	// Create the system of equations.
-	// If we wanted, we could add an extra coefficient in
-	// MR and add Determinant(M)-MR.num_coeff as a constraint.
-	// I imagine this would be much slower though, as it would
-	// introduce a non-linear equation into our system.
 	S := [];
+	if SAFE then
+		S := [Determinant(M)-MR.num_coeff];
+	end if;
 	for i := 1 to #action do
 		S cat:= Eltseq(
 			M*ChangeRing(new_action[i], RR,
@@ -513,16 +500,11 @@ function isomorphic(new_basis, new_action, basis, action)
 		);
 	end for;
 
-	// Currently the equations in S live in R. However,
-	// observe that the entries p_ij of M^2 - M = M(M - I)
-	// are homogeneous polynomials in the generators of R
-	// if and only if the diagonal of M is of degree 0.
-	// This is precisely the case in our setup. Thus each
-	// such entry m_ij of M^2 - M is zero if and only if
-	// the coefficient c_k^ij of each monomial term in p_ij
-	// is zero. This allows us to reduce S to a system of
-	// equations in our coefficient ring MR by replacing
-	// each equation p_ij = 0 with {c_k^ij = 0}_k.
+	// Currently, the expressions in S live inside R.
+	// Let p be any such polynomial expression. Clearly
+	// p = 0 if and only if, for all d, the coefficient
+	// of the degree d term is 0. This allows us to
+	// reduce our system to a system of equations in MR.
 	i := 1;
 	while i le #S do
 		if Degree(S[i]) ne 0 then
@@ -535,18 +517,15 @@ function isomorphic(new_basis, new_action, basis, action)
 	end while;
 
 	// Solve our system of equations.
-	// Because we're quotienting by the radical generated
-	// by a system of linear equations, I will be radical.
+	// I is generated by a system of linear
+	// equations and is hence radical.
 	I := ideal<MR | S>;
 	D := RadicalDecomposition(I);
-	diagonal := Set(diagonal);
 	for J in D do
 		// Performing PrimaryDecomposition invokes a computation of the
 		// Groebner bases. We can reuse the ones it computed for us here
-		// to check for any invertible solutions (solutions where any
-		// diagonal element is zero). I believe any solution here should
-		// either be zero or invertible, but this isn't much more work.
-		if IsDisjoint(Set(GroebnerBasis(J)), diagonal) then
+		// to check for any non-zero solutions.
+		if GroebnerBasis(J) ne groebner_zero then
 			return true, d;
 		end if;
 	end for;
@@ -687,8 +666,6 @@ function main()
 				elif #primitives eq 1 then
 					// If we only found the identity idempotent,
 					// the current module is indecomposable.
-					// If we choose not to order the basis after
-					// tensoring, we will need to do it here instead.
 					Append(~new_bases, basis);
 					Append(~new_actions, action);
 				else
