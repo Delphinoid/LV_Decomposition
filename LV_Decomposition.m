@@ -9,6 +9,7 @@
 // equal-rank Lusztig-Vogan category described by this triplet.
 W := CoxeterGroup(GrpMat, "G2");
 // Finite index subgroups of finitely-generated groups are finitely-generated.
+// If you leave WK empty, this will generate the category of Soergel bimodules.
 WK := [[1,2,1], [2,1,2]];
 // The polynomial reflection_basis[i][j] corresponds to s_i(a_{s_j}).
 // If it's empty, we default to using the geometric representation.
@@ -20,13 +21,8 @@ reflection_basis := [];
 //============//
 // Test Flags //
 //============//
-// A simple exercise is checking that R_xBS(w) is invariant under
-// the right duality functor. As this functor inverts gradings, this
-// tells us that sorting the bases by their degrees will make all
-// morphisms block upper triangular matrices, where each diagonal
-// block consists only of elements that are degree 0 (scalars).
-SORT_BASES := false;
 SAFE := true;
+SORT_BASES := true;
 
 
 //==================//
@@ -577,7 +573,7 @@ function main()
 	KW := [];
 	if IsEmpty(WK) then
 		WFP := CoxeterGroup(GrpFPCox, W);
-		KW := [[0]] cat [Eltseq(w) : w in Generators(WFP)];
+		KW := [[0]];
 	else
 		WFP := CoxeterGroup(GrpFPCox, W);
 		KW := [Eltseq(w) : w in RightTransversal(WFP, sub<WFP | WK>)];
