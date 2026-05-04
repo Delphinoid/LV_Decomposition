@@ -149,6 +149,29 @@ function tensor(k, basis, action)
 	
 end function;
 
+// Given a ring of variables and a Groebner
+// basis, find the most sparse solution.
+function solution(R, G)
+	// Magma computes reduced Groebner bases. Each element of G
+	// will be monic and each monomial in each element will not
+	// be divisible by the leading monomial of any other element
+	// in the basis (equivalently, each leading monomial does not
+	// divide any monomial in any other element). This means we
+	// can view the leading monomials as "constrained" variables
+	// and the remaining monomials as "free" variables.
+	X := [R!0 : i in [1..Ngens(R)]];
+	k := 1;
+	for i := 1 to #G do
+		// Find which variable the leading monomial corresponds to.
+		m := LeadingMonomial(G[i]);
+		while m ne R.k do
+			k +:= 1;
+		end while;
+		X[k] := -MonomialCoefficient(G[i], 1);
+	end for;
+	return X;
+end function;
+
 // Solve for the idempotents of a given module.
 // Returns a list of bases for the primitive idempotents.
 procedure decompose(basis, action, ~primitives)
@@ -158,7 +181,7 @@ procedure decompose(basis, action, ~primitives)
 	// Build a degree 0 symbolic matrix.
 	// Determine the degree of each entry m_ij of M,
 	// as well as the number of monomial coefficients.
-	// We use the latter when initializing the ring MR.
+	// We use the latter when initializing the ring C.
 	M_grading := [];
 	num_coeff := 0;
 	for i := 1 to n do
@@ -179,36 +202,36 @@ procedure decompose(basis, action, ~primitives)
 		Append(~M_grading, row);
 	end for;
 	
-	MR := PolynomialRing(Rationals(), num_coeff);
-	RR := PolynomialRing(MR, Ngens(R));
+	C := PolynomialRing(Rationals(), num_coeff);
+	CR := PolynomialRing(C, Ngens(R));
 
 	// For each element m_ij of M, set it equal to a
 	// general polynomial of degree M_grading[i][j]
-	// in the simple roots, with coefficients in MR.
+	// in the simple roots, with coefficients in C.
 	// The variable k keeps track of which monomial
-	// coefficient in MR we're currently up to.
-	M := ZeroMatrix(RR, n);
+	// coefficient in C we're currently up to.
+	M := ZeroMatrix(CR, n);
 	k := 1;
 	// Later on, we can just check if the Groebner
 	// basis is equal to either of these to eliminate
 	// trivial 0-dimensional solutions.
-	groebner_zero := [MR.k : k in [1..num_coeff]];
+	groebner_zero := [C.k : k in [1..num_coeff]];
 	groebner_identity := groebner_zero;
 	for i := 1 to n do
 		for j := 1 to n do
 			if i eq j then
 				// Diagonals of degree d morphisms are always degree d,
-				// so MR.k - 1 really will be homogeneous of degree 0.
-				M[i][j] := MR.k;
+				// so C.k - 1 really will be homogeneous of degree 0.
+				M[i][j] := C.k;
 				groebner_identity[k] -:= 1;
 				k +:= 1;
 			else
 				degree := M_grading[i][j];
 				if degree ge 0 then
-					terms := MonomialsOfDegree(RR, degree);
+					terms := MonomialsOfDegree(CR, degree);
 					m_ij := 0;
 					for b := 1 to #terms do
-						m_ij +:= (MR.k) * terms[b];
+						m_ij +:= (C.k) * terms[b];
 						k +:= 1;
 					end for;
 					M[i][j] := m_ij;
@@ -226,11 +249,11 @@ procedure decompose(basis, action, ~primitives)
 	// commutes with all of our action matrices.
 	for A in action do
 		S cat:= Eltseq(
-			M*ChangeRing(A, RR,
-				hom<R -> RR | [RR.i : i in [1..Ngens(R)]]>
+			M*ChangeRing(A, CR,
+				hom<R -> CR | [CR.i : i in [1..Ngens(R)]]>
 			) -
-			ChangeRing(A, RR,
-				hom<R -> RR | [RR.i : i in [1..Ngens(R)]]>
+			ChangeRing(A, CR,
+				hom<R -> CR | [CR.i : i in [1..Ngens(R)]]>
 			)*M
 		);
 	end for;
@@ -239,7 +262,7 @@ procedure decompose(basis, action, ~primitives)
 	// Let p be any such polynomial expression. Clearly
 	// p = 0 if and only if, for all d, the coefficient
 	// of the degree d term is 0. This allows us to
-	// reduce our system to a system of equations in MR.
+	// reduce our system to a system of equations in C.
 	i := 1;
 	while i le #S do
 		if Degree(S[i]) gt 0 then
@@ -254,52 +277,43 @@ procedure decompose(basis, action, ~primitives)
 	// Solve our system of equations.
 	// I suspect this ideal should always
 	// be radical, but I'm not sure why.
-	I := ideal<MR | S>;
+	I := ideal<C | S>;
 	D := SAFE select PrimaryDecomposition(I) else RadicalDecomposition(I);
 	// Build the idempotents array. This consists of pairs
 	// of idempotent matrices E and bases for their images.
 	idempotents := [];
 	for J in D do
-		if Dimension(J) eq 0 then
-			// Performing PrimaryDecomposition invokes a computation of the
-			// Groebner bases. We can reuse the ones it computed for us here
-			// to ensure that this 0-dimensional solution is neither zero nor
-			// the identity before we go ahead and perform VarietySequence.
-			if
-				GroebnerBasis(J) ne groebner_zero and
-				GroebnerBasis(J) ne groebner_identity
-			then
-				// We have a new idempotent.
-				E := ChangeRing(M, R,
-					hom< RR -> R |
-						hom< MR -> Rationals() | VarietySequence(J)[1] >,
-						[R.i : i in [1..Ngens(R)]]
-					>
-				);
-				// Projective modules over polynomial rings are free.
-				// In other words, we can find a basis for the image of E.
-				// The "Image" function in Magma computes the row space.
-				// We save this since we'll also need it when flattening.
-				Append(~idempotents,
-					[* E, MinimalBasis(Image(Transpose(E))) *]
-				);
-			end if;
-		else
-			// MAJOR ASSUMPTION: The only time we should ever have
-			// non-zero dimension is if QB_s splits as Q(-1) + Q(1).
-			// Let's just return with an empty idempotent array to
-			// communicate that we encountered this case.
-			return;
+		// Performing PrimaryDecomposition invokes a computation of the
+		// Groebner bases. We can reuse the ones it computed for us here
+		// to ensure that this 0-dimensional solution is neither zero nor
+		// the identity before we go ahead and perform VarietySequence.
+		if
+			GroebnerBasis(J) ne groebner_zero and
+			GroebnerBasis(J) ne groebner_identity
+		then
+			// We have a new idempotent.
+			// Build the idempotent matrix by finding
+			// a solution from the Groebner basis and
+			// evaluating each variable in C.
+			E := ChangeRing(M, R,
+				hom< CR -> R |
+					hom< C -> Rationals() | solution(C, GroebnerBasis(J)) >,
+					[R.i : i in [1..Ngens(R)]]
+				>
+			);
+			// Projective modules over polynomial rings are free.
+			// In other words, we can find a basis for the image of E.
+			// The "Image" function in Magma computes the row space.
+			// We save this since we'll also need it when flattening.
+			Append(~idempotents,
+				[* E, MinimalBasis(Image(Transpose(E))) *]
+			);
 		end if;
 	end for;
 	
 	// If we found no non-trivial idempotents,
 	// we must be indecomposable.
 	if IsEmpty(idempotents) then
-		// Any module with only a single primitive
-		// idempotent is indecomposable, hence this
-		// trick to make #primitives = 1.
-		primitives := [[]];
 		return;
 	end if;
 	
@@ -433,7 +447,7 @@ function isomorphic(new_basis, new_action, basis, action)
 	// Build a degree d symbolic matrix.
 	// Determine the degree of each entry m_ij of M,
 	// as well as the number of monomial coefficients.
-	// We use the latter when initializing the ring MR.
+	// We use the latter when initializing the ring C.
 	M_grading := [];
 	num_coeff := 0;
 	if SAFE then
@@ -457,27 +471,27 @@ function isomorphic(new_basis, new_action, basis, action)
 		Append(~M_grading, row);
 	end for;
 	
-	MR := PolynomialRing(Rationals(), num_coeff);
-	RR := PolynomialRing(MR, Ngens(R));
+	C := PolynomialRing(Rationals(), num_coeff);
+	CR := PolynomialRing(C, Ngens(R));
 
 	// For each element m_ij of M, set it equal to a
 	// general polynomial of degree M_grading[i][j]
-	// in the simple roots, with coefficients in MR.
+	// in the simple roots, with coefficients in C.
 	// The variable k keeps track of which monomial
-	// coefficient in MR we're currently up to.
-	M := ZeroMatrix(RR, n);
+	// coefficient in C we're currently up to.
+	M := ZeroMatrix(CR, n);
 	k := 1;
 	// Later on, we can just check if the Groebner basis
 	// is equal to this to eliminate the zero solution.
-	groebner_zero := [MR.k : k in [1..num_coeff]];
+	groebner_zero := [C.k : k in [1..num_coeff]];
 	for i := 1 to n do
 		for j := 1 to n do
 			degree := M_grading[i][j];
 			if degree ge 0 then
-				terms := MonomialsOfDegree(RR, degree);
+				terms := MonomialsOfDegree(CR, degree);
 				m_ij := 0;
 				for b := 1 to #terms do
-					m_ij +:= (MR.k) * terms[b];
+					m_ij +:= (C.k) * terms[b];
 					k +:= 1;
 				end for;
 				M[i][j] := m_ij;
@@ -488,15 +502,15 @@ function isomorphic(new_basis, new_action, basis, action)
 	// Create the system of equations.
 	S := [];
 	if SAFE then
-		S := [Determinant(M)-MR.num_coeff];
+		S := [Determinant(M)-C.num_coeff];
 	end if;
 	for i := 1 to #action do
 		S cat:= Eltseq(
-			M*ChangeRing(new_action[i], RR,
-				hom<R -> RR | [RR.i : i in [1..Ngens(R)]]>
+			M*ChangeRing(new_action[i], CR,
+				hom<R -> CR | [CR.i : i in [1..Ngens(R)]]>
 			) -
-			ChangeRing(action[i], RR,
-				hom<R -> RR | [RR.i : i in [1..Ngens(R)]]>
+			ChangeRing(action[i], CR,
+				hom<R -> CR | [CR.i : i in [1..Ngens(R)]]>
 			)*M
 		);
 	end for;
@@ -505,7 +519,7 @@ function isomorphic(new_basis, new_action, basis, action)
 	// Let p be any such polynomial expression. Clearly
 	// p = 0 if and only if, for all d, the coefficient
 	// of the degree d term is 0. This allows us to
-	// reduce our system to a system of equations in MR.
+	// reduce our system to a system of equations in C.
 	i := 1;
 	while i le #S do
 		if Degree(S[i]) ne 0 then
@@ -520,7 +534,7 @@ function isomorphic(new_basis, new_action, basis, action)
 	// Solve our system of equations.
 	// I is generated by a system of linear
 	// equations and is hence radical.
-	I := ideal<MR | S>;
+	I := ideal<C | S>;
 	D := RadicalDecomposition(I);
 	for J in D do
 		// Performing PrimaryDecomposition invokes a computation of the
@@ -655,16 +669,6 @@ function main()
 				new_bases := [* *];
 				new_actions := [* *];
 				if IsEmpty(primitives) then
-					// Add some splitting edges to
-					// the W-graph and skip s_k.
-					Append(~W_graph, [
-						num_ind[layer]+source, num_ind[layer]+source, k, 1
-					]);
-					Append(~W_graph, [
-						num_ind[layer]+source, num_ind[layer]+source, k, -1
-					]);
-					continue k;
-				elif #primitives eq 1 then
 					// If we only found the identity idempotent,
 					// the current module is indecomposable.
 					Append(~new_bases, basis);
