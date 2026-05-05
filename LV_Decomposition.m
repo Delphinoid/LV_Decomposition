@@ -153,21 +153,39 @@ end function;
 // basis, find the most sparse solution.
 function solution(R, G)
 	// Magma computes reduced Groebner bases. Each element of G
-	// will be monic and each monomial in each element will not
-	// be divisible by the leading monomial of any other element
-	// in the basis (equivalently, each leading monomial does not
-	// divide any monomial in any other element). This means we
-	// can view the leading monomials as "constrained" variables
-	// and the remaining monomials as "free" variables.
+	// will be monic and its leading monomial will not divide any
+	// monomial in any other element). This means we can view the
+	// leading monomials as "constrained" variables and the
+	// remaining monomials as "free" variables.
 	X := [R!0 : i in [1..Ngens(R)]];
 	k := 1;
-	for i := 1 to #G do
-		// Find which variable the leading monomial corresponds to.
-		m := LeadingMonomial(G[i]);
-		while m ne R.k do
+	for g in G do
+		// Each element of G will be of the form
+		// x^a + p + c, where p is some polynomial
+		// with zero constant term and c is a scalar.
+		// We want to find which generator of R
+		// corresponds to x and compute (-c)^{1/a}.
+		// Start by determining x^a.
+		x := LeadingMonomial(g);
+		// This will be a monomial, so a should contain
+		// only a single non-zero element corresponding
+		// to the index of the generator x in R. Due to
+		// the ordering of the Groebner basis, we know
+		// that this element must occur after the last
+		// generator we found in the basis.
+		a := Exponents(x);
+		while k le #a do
+			if a[k] ne 0 then
+				// We need to approximate the output of Root
+				// as a rational number. Quite annoying!
+				X[k] := BestApproximation(
+					Root(-MonomialCoefficient(g, 1), a[k]),
+					10000000
+				);
+				break;
+			end if;
 			k +:= 1;
 		end while;
-		X[k] := -MonomialCoefficient(G[i], 1);
 	end for;
 	return X;
 end function;
