@@ -303,8 +303,10 @@ procedure decompose(basis, action, ~primitives)
 	for J in D do
 		// Performing PrimaryDecomposition invokes a computation of the
 		// Groebner bases. We can reuse the ones it computed for us here
-		// to ensure that this 0-dimensional solution is neither zero nor
-		// the identity before we go ahead and perform VarietySequence.
+		// to ensure that this solution is neither zero nor the identity.
+		// We expect (but do not assume) J to always be 0-dimensional
+		// unless QB_s = Q(-1) + Q(1), as an analogue to how KL basis
+		// elements multiply.
 		if
 			GroebnerBasis(J) ne groebner_zero and
 			GroebnerBasis(J) ne groebner_identity
@@ -520,6 +522,9 @@ function isomorphic(new_basis, new_action, basis, action)
 	// Create the system of equations.
 	S := [];
 	if SAFE then
+		// This may not be necessary. We expect Hom^0(Q, Q') to be the
+		// ground field if Q is isomorphic to Q' and 0 otherwise, as
+		// an analogue to the "almost-orthogonality" of the KL basis.
 		S := [Determinant(M)-C.num_coeff];
 	end if;
 	for i := 1 to #action do
