@@ -149,45 +149,26 @@ function tensor(k, basis, action)
 	
 end function;
 
-// Given a ring of variables and a Groebner
-// basis, find the most sparse solution.
-function solution(C, G)
-	// Magma computes reduced Groebner bases. Each element of G
-	// will be monic and its leading monomial will not divide any
-	// monomial in any other element). This means we can view the
-	// leading monomials as "constrained" variables and the
-	// remaining monomials as "free" variables.
-	X := [C!0 : i in [1..Ngens(C)]];
-	k := 1;
-	for g in G do
-		// Each element of G will be of the form
-		// x^a + p + c, where p is some polynomial
-		// with zero constant term and c is a scalar.
-		// We want to find which generator of C
-		// corresponds to x and compute (-c)^{1/a}.
-		// Start by determining x^a.
-		x := LeadingMonomial(g);
-		// This will be a monomial, so a should contain
-		// only a single non-zero element corresponding
-		// to the index of the generator x in R. Due to
-		// the ordering of the Groebner basis, we know
-		// that this element must occur after the last
-		// generator we found in the basis.
-		a := Exponents(x);
-		while k le #a do
-			if a[k] ne 0 then
-				// We need to approximate the output of Root
-				// as a rational number. Quite annoying!
-				X[k] := BestApproximation(
-					Root(-MonomialCoefficient(g, 1), a[k]),
-					10000000
-				);
-				break;
-			end if;
-			k +:= 1;
-		end while;
-	end for;
-	return X;
+// Given a ring of indeterminates and an
+// ideal J, find the solution that takes
+// all independent variables to be zero.
+function solution(C, J)
+	// The Krull dimension of the ideal is the maximal cardinality of
+	// the set of indeterminates in C such that there is no leading
+	// monomial depending only on variables in C. The indeterminates
+	// not in this set are our independent variables. We can determine
+	// this set conveniently using Dimension and then feed the result
+	// into VarietySequence to solve the resulting 0-dimensional system.
+	_, I := Dimension(J);
+	// NOTE: occasionally, the ideal J may capture
+	// multiple primitive ideals. This happens (for
+	// instance) on the final layer of SU(3, 1) when
+	// we choose not to sort the graded bases.
+	// I still need to think of a proper fix.
+	// Ideally this function should find all values
+	// for the independent variables that correspond
+	// to solutions orthogonal to the one chosen here.
+	return VarietySequence(J + ideal<C | [C.i : i in I]>)[1];
 end function;
 
 // Solve for the idempotents of a given module.
@@ -314,8 +295,8 @@ procedure decompose(basis, action, ~primitives)
 			// a solution from the Groebner basis and
 			// evaluating each variable in C.
 			E := ChangeRing(M, R,
-				hom< CR -> R |
-					hom< C -> Rationals() | solution(C, G) >,
+				hom<CR -> R |
+					hom<C -> Rationals() | solution(C, J)>,
 					[R.i : i in [1..Ngens(R)]]
 				>
 			);
@@ -357,7 +338,7 @@ procedure decompose(basis, action, ~primitives)
 	];
 	i := 2;
 	Z := ZeroMatrix(R, n);
-	while total_rank lt n do
+	while total_rank lt n and i le #idempotents do
 		// We essentially step through our idempotents from
 		// smallest rank to largest, adding those that are
 		// orthogonal until their ranks add up to n.
@@ -375,6 +356,22 @@ procedure decompose(basis, action, ~primitives)
 		end if;
 		i +:= 1;
 	end while;
+	
+	// This is a really bad failsafe.
+	// Occasionally, the ideals J in D may capture
+	// multiple primitive ideals. This happens (for
+	// instance) on the final layer of SU(3, 1) when
+	// we choose not to sort the graded bases.
+	// I still need to think of a proper fix.
+	// When this is fixed, you can remove the check
+	// that "i le #idempotents" in the loop above.
+	if total_rank lt n then
+		Append(~primitives,
+			MinimalBasis(Image(Transpose(
+				IdentityMatrix(R, n) - primitive_matrices[#primitive_matrices]
+			)))
+		);
+	end if;
 	
 end procedure;
 
