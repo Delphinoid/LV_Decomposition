@@ -149,34 +149,22 @@ function tensor(k, basis, action)
 	
 end function;
 
-// Given a ring of indeterminates and an
-// ideal J, find the solution that takes
-// all independent variables to be zero.
-function solution(C, J)
-	// The Krull dimension of the ideal is the maximal cardinality of
-	// the set of indeterminates in C such that there is no leading
-	// monomial depending only on variables in C. The indeterminates
-	// not in this set are our independent variables. We can determine
-	// this set conveniently using Dimension and then feed the result
-	// into VarietySequence to solve the resulting 0-dimensional system.
-	_, I := Dimension(J);
-	// Problem: what if this choice does not correspond to a primitive
-	// idempotent? This happens on the final layer of SU(3, 1).
-	return VarietySequence(J + ideal<C | [C.i : i in I]>)[1];
-end function;
-
-// Solve for the idempotents of a given module.
-// Returns a list of bases for the primitive idempotents.
-procedure decompose(basis, action, ~primitives)
-
-	n := #basis;
+// Build a general degree 0 right R-module homomorphism together
+// with a system of equations it must satisfy in order to be a
+// valid bimodule homomorphism.
+function morphism(
+	basis_domain, action_domain, basis_codomain, action_codomain, extra_coeffs
+)
 	
-	// Build a degree 0 symbolic matrix.
+	// We assume #basis_domain = #basis_codomain.
+	n := #basis_domain;
+	
+	// Build a degree d = 0 symbolic matrix.
 	// Determine the degree of each entry m_ij of M,
 	// as well as the number of monomial coefficients.
 	// We use the latter when initializing the ring C.
 	M_grading := [];
-	num_coeff := 0;
+	num_coeff := extra_coeffs;
 	for i := 1 to n do
 		row := [];
 		for j := 1 to n do
@@ -184,7 +172,7 @@ procedure decompose(basis, action, ~primitives)
 			// require that deg(m_ij) = d + deg(b_j) - deg(b_i'), where
 			// b_i' is a basis for the codomain and b_j is a basis for
 			// the domain. We divide by 2 to get the polynomial degree.
-			degree := ShiftRight(basis[j] - basis[i], 1);
+			degree := ShiftRight(basis_domain[j] - basis_codomain[i], 1);
 			Append(~row, degree);
 			if degree ge 0 then
 				// This is the number of monomials of
@@ -209,49 +197,47 @@ procedure decompose(basis, action, ~primitives)
 	// basis is equal to either of these to eliminate
 	// trivial 0-dimensional solutions.
 	groebner_zero := [C.k : k in [1..num_coeff]];
-	groebner_identity := groebner_zero;
+	groebner_identity := basis_domain eq basis_codomain select
+		groebner_zero
+	else
+		[]
+	;
 	for i := 1 to n do
 		for j := 1 to n do
-			if i eq j then
-				// Diagonals of degree d morphisms are always degree d,
-				// so C.k - 1 really will be homogeneous of degree 0.
-				M[i][j] := C.k;
+			if i eq j and not IsEmpty(groebner_identity) then
+				// If the bases are equal, the identity
+				// matrix will be a possible solution.
 				groebner_identity[k] -:= 1;
-				k +:= 1;
-			else
-				degree := M_grading[i][j];
-				if degree ge 0 then
-					terms := MonomialsOfDegree(CR, degree);
-					m_ij := 0;
-					for b := 1 to #terms do
-						m_ij +:= (C.k) * terms[b];
-						k +:= 1;
-					end for;
-					M[i][j] := m_ij;
-				end if;
+			end if;
+			degree := M_grading[i][j];
+			if degree ge 0 then
+				terms := MonomialsOfDegree(CR, degree);
+				m_ij := 0;
+				for b := 1 to #terms do
+					m_ij +:= (C.k) * terms[b];
+					k +:= 1;
+				end for;
+				M[i][j] := m_ij;
 			end if;
 		end for;
 	end for;
 	
 	// Create the system of equations.
-	// Idempotent constraint.
-	S := Eltseq(M*M - M);
-
-	// Bimodule homomorphism constraint.
-	// M is only a bimodule homomorphism if it
-	// commutes with all of our action matrices.
-	for A in action do
+	S := [];
+	phi := hom<R -> CR | [CR.i : i in [1..Ngens(R)]]>;
+	for i := 1 to #action_domain do
 		S cat:= Eltseq(
-			M*ChangeRing(A, CR,
-				hom<R -> CR | [CR.i : i in [1..Ngens(R)]]>
-			) -
-			ChangeRing(A, CR,
-				hom<R -> CR | [CR.i : i in [1..Ngens(R)]]>
-			)*M
+			M*ChangeRing(action_domain[i], CR, phi) -
+			ChangeRing(action_codomain[i], CR, phi)*M
 		);
 	end for;
+	
+	return C, CR, M, S, groebner_zero, groebner_identity;
+	
+end function;
 
-	// Currently, the expressions in S live inside R.
+procedure reduce(~S)
+	// Currently, the expressions in S live inside CR.
 	// Let p be any such polynomial expression. Clearly
 	// p = 0 if and only if, for all d, the coefficient
 	// of the degree d term is 0. This allows us to
@@ -267,6 +253,28 @@ procedure decompose(basis, action, ~primitives)
 			i +:= 1;
 		end if;
 	end while;
+end procedure;
+
+// Solve for the idempotents of a given module.
+// Returns a list of bases for the primitive idempotents.
+procedure decompose(basis, action, ~primitives)
+
+	n := #basis;
+
+	// Build a general degree 0 morphism.
+	// This function returns a ring of coefficients C,
+	// the tensor product of C and R, a symbolic matrix
+	// M representing a general degree 0 right R-module
+	// homomorphism and a system of equations S that it
+	// must satisfy to be a bimodule homomorphism.
+	C, CR, M, S, groebner_zero, groebner_identity := morphism(
+		basis, action, basis, action, 0
+	);
+	
+	// Add the idempotent constraint.
+	S cat:= Eltseq(M*M - M);
+	// Reduce the system of equations from CR to C.
+	reduce(~S);
 
 	// Solve our system of equations.
 	// I suspect this ideal should always
@@ -286,12 +294,17 @@ procedure decompose(basis, action, ~primitives)
 		G := GroebnerBasis(J);
 		if G ne groebner_zero and G ne groebner_identity then
 			// We have a new idempotent.
-			// Build the idempotent matrix by finding
-			// a solution from the Groebner basis and
-			// evaluating each variable in C.
+			// The Krull dimension of the ideal is the maximal cardinality of
+			// the set of indeterminates in C such that there is no leading
+			// monomial depending only on variables in C. The indeterminates
+			// not in this set are our independent variables. We can determine
+			// this set conveniently using Dimension and then feed the result
+			// into VarietySequence to solve the resulting 0-dimensional system.
+			d, I := Dimension(J);
+			V := VarietySequence(J + ideal<C | [C.i : i in I]>)[1];
 			E := ChangeRing(M, R,
 				hom<CR -> R |
-					hom<C -> Rationals() | solution(C, J)>,
+					hom<C -> Rationals() | V>,
 					[R.i : i in [1..Ngens(R)]]
 				>
 			);
@@ -299,8 +312,10 @@ procedure decompose(basis, action, ~primitives)
 			// In other words, we can find a basis for the image of E.
 			// The "Image" function in Magma computes the row space.
 			// We save this since we'll also need it when flattening.
+			// This is actually a bit wasteful now due to how we now
+			// find primitive idempotents: this should be addressed.
 			Append(~idempotents,
-				[* E, MinimalBasis(Image(Transpose(E))) *]
+				[* E, MinimalBasis(Image(Transpose(E))), d, G *]
 			);
 		end if;
 	end for;
@@ -310,6 +325,8 @@ procedure decompose(basis, action, ~primitives)
 	if IsEmpty(idempotents) then
 		return;
 	end if;
+	
+	// The code below is messy and suboptimal.
 	
 	// Sort the idempotents by rank. This is to
 	// prevent the situation where a non-primitive
@@ -333,55 +350,66 @@ procedure decompose(basis, action, ~primitives)
 	];
 	i := 2;
 	Z := ZeroMatrix(R, n);
-	while total_rank lt n and i le #idempotents do
+	while total_rank lt n do
 		// We essentially step through our idempotents from
 		// smallest rank to largest, adding those that are
 		// orthogonal until their ranks add up to n.
-		is_primitive := true;
-		for j := 1 to #primitive_matrices do
-			if
-				primitive_matrices[j]*idempotents[i][1] ne Z or
-				idempotents[i][1]*primitive_matrices[j] ne Z
-			then
-				is_primitive := false;
-				break;
+		if idempotents[i][3] eq 0 then
+			// If the dimension of the ideal is 0, we're on easy street.
+			is_primitive := true;
+			for j := 1 to #primitive_matrices do
+				if
+					primitive_matrices[j]*idempotents[i][1] ne Z or
+					idempotents[i][1]*primitive_matrices[j] ne Z
+				then
+					is_primitive := false;
+					break;
+				end if;
+			end for;
+			if is_primitive then
+				Append(~primitive_matrices, idempotents[i][1]);
+				Append(~primitives, idempotents[i][2]);
+				total_rank +:= #idempotents[i][2];
 			end if;
-		end for;
-		if is_primitive then
-			Append(~primitive_matrices, idempotents[i][1]);
-			Append(~primitives, idempotents[i][2]);
-			total_rank +:= #idempotents[i][2];
+		else
+			// If the dimension of the ideal is non-zero,
+			// things are a little trickier, since some
+			// solutions may not be primitive with respect
+			// to our initial choice of a primitive ideal.
+			S := idempotents[i][4];
+			for E in primitive_matrices do
+				S cat:= Eltseq(
+					M*ChangeRing(E, CR,
+						hom<R -> CR | [CR.i : i in [1..Ngens(R)]]>
+					)
+				) cat Eltseq(
+					ChangeRing(E, CR,
+						hom<R -> CR | [CR.i : i in [1..Ngens(R)]]>
+					)*M
+				);
+			end for;
+			reduce(~S);
+			I := ideal<C | S>;
+			D := SAFE select
+				PrimaryDecomposition(I)
+			else
+				RadicalDecomposition(I)
+			;
+			if not IsEmpty(D) then
+				_, I := Dimension(D[1]);
+				V := VarietySequence(D[1] + ideal<C | [C.i : i in I]>)[1];
+				E := ChangeRing(M, R,
+					hom<CR -> R |
+						hom<C -> Rationals() | V>,
+						[R.i : i in [1..Ngens(R)]]
+					>
+				);
+				Append(~primitive_matrices, E);
+				Append(~primitives, MinimalBasis(Image(Transpose(E))));
+				total_rank +:= #primitives[#primitives];
+			end if;
 		end if;
 		i +:= 1;
-	end while;
-	
-	// Occasionally, our choices for the indeterminates
-	// may cause us to miss primitive idempotents. This
-	// happens (for instance) on the final layer of
-	// SU(3, 1) when we do not sort the graded bases.
-	// Thus we need to go back and take complements.
-	// This needs to be fixed properly, but will likely
-	// involve a complete rewrite of this procedure.
-	i := #primitive_matrices;
-	I := IdentityMatrix(R, n);
-	while total_rank lt n do
-		is_primitive := true;
-		E := I - primitive_matrices[i];
-		for j := 1 to #primitive_matrices do
-			if
-				primitive_matrices[j]*E ne Z or
-				E*primitive_matrices[j] ne Z
-			then
-				is_primitive := false;
-				break;
-			end if;
-		end for;
-		if is_primitive then
-			Append(~primitive_matrices, E);
-			Append(~primitives, MinimalBasis(Image(Transpose(E))));
-			total_rank +:= #primitives[#primitives];
-		end if;
-		i -:= 1;
 	end while;
 	
 end procedure;
@@ -446,12 +474,12 @@ end function;
 // determines whether Q(d) is isomorphic to Q' for some d.
 function isomorphic(new_basis, new_action, basis, action)
 
-	n := #basis;
+	n := #new_basis;
 	
-	// Let (b_1, ..., b_m) be a basis for Q and
-	// let (b_1', ..., b_n') be a basis for Q'.
-	// First, make sure m = n.
-	if n ne #new_basis then
+	// Let (b_1, ..., b_n) be a basis for Q and
+	// let (b_1', ..., b_m') be a basis for Q'.
+	// First, make sure n = m.
+	if n ne #basis then
 		return false, 0;
 	end if;
 	
@@ -464,101 +492,32 @@ function isomorphic(new_basis, new_action, basis, action)
 	sorted_basis := Sort(basis);
 	d := sorted_basis[1] - sorted_new_basis[1];
 	for i := 1 to n do
+		// Shift the degree of the domain basis by d so we
+		// only need to look for degree 0 morphisms.
 		new_basis[i] +:= d;
 		if d+sorted_new_basis[i] ne sorted_basis[i] then
 			return false, 0;
 		end if;
 	end for;
 	
-	// Build a degree d symbolic matrix.
-	// Determine the degree of each entry m_ij of M,
-	// as well as the number of monomial coefficients.
-	// We use the latter when initializing the ring C.
-	M_grading := [];
-	num_coeff := 0;
-	if SAFE then
-		num_coeff := 1;
-	end if;
-	for i := 1 to n do
-		row := [];
-		for j := 1 to n do
-			// In order for M to be a graded morphism of degree d, we
-			// require that deg(m_ij) = d + deg(b_j) - deg(b_i'), where
-			// b_i' is a basis for the codomain and b_j is a basis for
-			// the domain. We divide by 2 to get the polynomial degree.
-			degree := ShiftRight(new_basis[j] - basis[i], 1);
-			Append(~row, degree);
-			if degree ge 0 then
-				// This is the number of monomials of
-				// this degree in Ngens(R) variables.
-				num_coeff +:= Binomial(degree+Ngens(R)-1, Ngens(R)-1);
-			end if;
-		end for;
-		Append(~M_grading, row);
-	end for;
+	// Build a general degree 0 morphism.
+	// This function returns a ring of coefficients C,
+	// the tensor product of C and R, a symbolic matrix
+	// M representing a general degree d right R-module
+	// homomorphism and a system of equations S that it
+	// must satisfy to be a bimodule homomorphism.
+	C, _, M, S, groebner_zero, _ := morphism(
+		new_basis, new_action, basis, action, SAFE select 1 else 0
+	);
 	
-	C := PolynomialRing(Rationals(), num_coeff);
-	CR := PolynomialRing(C, Ngens(R));
-
-	// For each element m_ij of M, set it equal to a
-	// general polynomial of degree M_grading[i][j]
-	// in the simple roots, with coefficients in C.
-	// The variable k keeps track of which monomial
-	// coefficient in C we're currently up to.
-	M := ZeroMatrix(CR, n);
-	k := 1;
-	// Later on, we can just check if the Groebner basis
-	// is equal to this to eliminate the zero solution.
-	groebner_zero := [C.k : k in [1..num_coeff]];
-	for i := 1 to n do
-		for j := 1 to n do
-			degree := M_grading[i][j];
-			if degree ge 0 then
-				terms := MonomialsOfDegree(CR, degree);
-				m_ij := 0;
-				for b := 1 to #terms do
-					m_ij +:= (C.k) * terms[b];
-					k +:= 1;
-				end for;
-				M[i][j] := m_ij;
-			end if;
-		end for;
-	end for;
-	
-	// Create the system of equations.
-	S := [];
 	if SAFE then
-		// A clever trick due to Victor. This is equivalent to asking
-		// det(M) = 1/C.num_coeff, forcing det(M) to be invertible.
-		S := [Determinant(M)*C.num_coeff - 1];
+		// A clever trick due to Victor. When SAFE is set, C will
+		// contain an additional coefficient that we will take to
+		// represent 1/det(M), forcing det(M) to be invertible.
+		S cat:= [Determinant(M)*C.Ngens(C) - 1];
 	end if;
-	for i := 1 to #action do
-		S cat:= Eltseq(
-			M*ChangeRing(new_action[i], CR,
-				hom<R -> CR | [CR.i : i in [1..Ngens(R)]]>
-			) -
-			ChangeRing(action[i], CR,
-				hom<R -> CR | [CR.i : i in [1..Ngens(R)]]>
-			)*M
-		);
-	end for;
-
-	// Currently, the expressions in S live inside R.
-	// Let p be any such polynomial expression. Clearly
-	// p = 0 if and only if, for all d, the coefficient
-	// of the degree d term is 0. This allows us to
-	// reduce our system to a system of equations in C.
-	// Another clever trick due to Victor.
-	i := 1;
-	while i le #S do
-		if Degree(S[i]) ne 0 then
-			monomial_coefficients := Coefficients(S[i]);
-			S := S[1..i-1] cat monomial_coefficients cat S[i+1..#S];
-			i +:= #monomial_coefficients;
-		else
-			i +:= 1;
-		end if;
-	end while;
+	// Reduce the system of equations from CR to C.
+	reduce(~S);
 
 	// Solve our system of equations.
 	// When I is generated by a system of
