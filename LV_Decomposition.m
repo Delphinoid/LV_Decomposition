@@ -11,10 +11,13 @@ W := CoxeterGroup(GrpMat, "G2");
 // Finite index subgroups of finitely-generated groups are finitely-generated.
 // If you leave WK empty, this will generate the category of Soergel bimodules.
 WK := [[1,2,1], [2,1,2]];
+// Set up the ring R. Note that our field F will not always be the
+// rationals, as W will often be defined over a field extension.
+F := BaseRing(W);
+R := PolynomialRing(F, Rank(W));
+AssignNames(~R, [Sprintf("a_%o", i) : i in [1..Ngens(R)]]);
 // The polynomial reflection_basis[i][j] corresponds to s_i(a_{s_j}).
 // If it's empty, we default to using the geometric representation.
-R := PolynomialRing(Rationals(), Rank(W));
-AssignNames(~R, [Sprintf("a_%o", i) : i in [1..Ngens(R)]]);
 reflection_basis := [];
 
 
@@ -183,7 +186,7 @@ function morphism(
 		Append(~M_grading, row);
 	end for;
 	
-	C := PolynomialRing(Rationals(), num_coeff);
+	C := PolynomialRing(F, num_coeff);
 	CR := PolynomialRing(C, Ngens(R));
 
 	// For each element m_ij of M, set it equal to a
@@ -304,7 +307,7 @@ procedure decompose(basis, action, ~primitives)
 			V := VarietySequence(J + ideal<C | [C.i : i in I]>)[1];
 			E := ChangeRing(M, R,
 				hom<CR -> R |
-					hom<C -> Rationals() | V>,
+					hom<C -> F | V>,
 					[R.i : i in [1..Ngens(R)]]
 				>
 			);
@@ -400,7 +403,7 @@ procedure decompose(basis, action, ~primitives)
 				V := VarietySequence(D[1] + ideal<C | [C.i : i in I]>)[1];
 				E := ChangeRing(M, R,
 					hom<CR -> R |
-						hom<C -> Rationals() | V>,
+						hom<C -> F | V>,
 						[R.i : i in [1..Ngens(R)]]
 					>
 				);
