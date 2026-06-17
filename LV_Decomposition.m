@@ -24,7 +24,6 @@ reflection_basis := [];
 //============//
 // Test Flags //
 //============//
-SAFE := true;
 SORT_BASES := true;
 
 
@@ -281,9 +280,14 @@ procedure decompose(basis, action, ~primitives)
 
 	// Solve our system of equations.
 	I := ideal<C | S>;
-	// We only care about the solutions to S. Geometrically, what
-	// we therefore want is a decomposition of V(I) into irreducible
-	// varieties. This is exactly what RadicalDecomposition does.
+	// Our ideal I will always admit a decomposition into
+	// primary ideals I_1, ... I_k. However, we only care
+	// about the solutions to S; that is, V(I). This means
+	// that geometrically, what we want are the varieties
+	// V(I_1), ..., V(I_k). Because the variety of an ideal
+	// is the same as the variety of its radical, we only
+	// need the radical decomposition, where each prime
+	// ideal will correspond to an irreducible variety.
 	D := RadicalDecomposition(I);
 	// Build the idempotents array. This consists of pairs
 	// of idempotent matrices E and bases for their images.
@@ -408,6 +412,11 @@ procedure decompose(basis, action, ~primitives)
 				Append(~primitive_matrices, E);
 				Append(~primitives, MinimalBasis(Image(Transpose(E))));
 				total_rank +:= #primitives[#primitives];
+				// We should repeat with this ideal in case it captures
+				// more orthogonal solutions. This should only ever
+				// happen if there is an indecomposable summand with
+				// multiplicity greater than 1.
+				i -:= 1;
 			end if;
 		end if;
 		i +:= 1;
@@ -508,30 +517,32 @@ function isomorphic(new_basis, new_action, basis, action)
 	// homomorphism and a system of equations S that it
 	// must satisfy to be a bimodule homomorphism.
 	C, _, M, S, groebner_zero, _ := morphism(
-		new_basis, new_action, basis, action, SAFE select 1 else 0
+		new_basis, new_action, basis, action, 1
 	);
 	
-	if SAFE then
-		// A clever trick due to Victor. When SAFE is set, C will
-		// contain an additional coefficient that we will take to
-		// represent 1/det(M), forcing det(M) to be invertible.
-		S cat:= [Determinant(M)*C.Ngens(C) - 1];
-	end if;
+	// A clever trick due to Victor. We add an aditional
+	// coefficient to C that we will take to represent
+	// 1/det(M), forcing det(M) to be invertible.
+	S cat:= [Determinant(M)*C.Ngens(C) - 1];
 	// Reduce the system of equations from CR to C.
 	reduce(~S);
 
 	// Solve our system of equations.
 	I := ideal<C | S>;
-	// We only care about the solutions to S. Geometrically, what
-	// we therefore want is a decomposition of V(I) into irreducible
-	// varieties. This is exactly what RadicalDecomposition does.
+	// Our ideal I will always admit a decomposition into
+	// primary ideals I_1, ... I_k. However, we only care
+	// about the solutions to S; that is, V(I). This means
+	// that geometrically, what we want are the varieties
+	// V(I_1), ..., V(I_k). Because the variety of an ideal
+	// is the same as the variety of its radical, we only
+	// need the radical decomposition, where each prime
+	// ideal will correspond to an irreducible variety.
 	D := RadicalDecomposition(I);
 	for J in D do
-		// We expect (but do not assume, unless the SAFE flag is set)
-		// Hom^0(Q, Q') to be the ground field if Q is isomorphic to
-		// Q' and 0 otherwise, as an analogue to the "almost-orthogonality"
-		// of the KL basis. If the SAFE flag is unset, Victor's determinant
-		// trick ensures that any non-zero solution will be an isomorphism.
+		// We expect (but do not assume) Hom^0(Q, Q') to be the ground field
+		// if Q is isomorphic to Q' and 0 otherwise, as an analogue to the
+		// "almost-orthogonality" of the KL basis. As a result, asking that
+		// the determinant be non-zero may not be necessary.
 		if GroebnerBasis(J) ne groebner_zero then
 			return true, d;
 		end if;
