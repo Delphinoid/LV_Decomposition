@@ -281,12 +281,9 @@ procedure decompose(basis, action, ~primitives)
 
 	// Solve our system of equations.
 	I := ideal<C | S>;
-	// We only care about the solutions to S; that is,
-	// given some decomposition of I into primary ideals
-	// J_1, ..., J_k, we only care about the varieties
-	// V(J_i). Because the variety of an ideal is the
-	// same as the variety of its radical, we can safely
-	// restrict to the radical decomposition.
+	// We only care about the solutions to S. Geometrically, what
+	// we therefore want is a decomposition of V(I) into irreducible
+	// varieties. This is exactly what RadicalDecomposition does.
 	D := RadicalDecomposition(I);
 	// Build the idempotents array. This consists of pairs
 	// of idempotent matrices E and bases for their images.
@@ -525,12 +522,9 @@ function isomorphic(new_basis, new_action, basis, action)
 
 	// Solve our system of equations.
 	I := ideal<C | S>;
-	// We only care about the solutions to S; that is,
-	// given some decomposition of I into primary ideals
-	// J_1, ..., J_k, we only care about the varieties
-	// V(J_i). Because the variety of an ideal is the
-	// same as the variety of its radical, we can safely
-	// restrict to the radical decomposition.
+	// We only care about the solutions to S. Geometrically, what
+	// we therefore want is a decomposition of V(I) into irreducible
+	// varieties. This is exactly what RadicalDecomposition does.
 	D := RadicalDecomposition(I);
 	for J in D do
 		// We expect (but do not assume, unless the SAFE flag is set)
