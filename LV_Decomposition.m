@@ -302,23 +302,22 @@ procedure decompose(basis, action, ~primitives)
 			// monomial depending only on variables in C. The indeterminates
 			// not in this set are our independent variables. We can determine
 			// this set conveniently using Dimension and then feed the result
-			// into VarietySequence to solve the resulting 0-dimensional system.
-			d, I := Dimension(J);
-			V := VarietySequence(J + ideal<C | [C.i : i in I]>)[1];
+			// into VarietySequence to solve the new 0-dimensional system.
+			d, U := Dimension(J);
+			V := VarietySequence(J + ideal<C | [C.i : i in U]>)[1];
 			E := ChangeRing(M, R,
 				hom<CR -> R |
 					hom<C -> F | V>,
 					[R.i : i in [1..Ngens(R)]]
 				>
 			);
-			// Projective modules over polynomial rings are free.
-			// In other words, we can find a basis for the image of E.
-			// The "Image" function in Magma computes the row space.
-			// We save this since we'll also need it when flattening.
-			// This is actually a bit wasteful now due to how we now
-			// find primitive idempotents: this should be addressed.
+			// We save the rank of E (in other words, the trace)
+			// so we can sort this array by rank before computing
+			// primitive idempotents. Because the trace varies
+			// continuously while ranks are discrete, we know that
+			// the rank must be constant within each ideal J.
 			Append(~idempotents,
-				[* E, MinimalBasis(Image(Transpose(E))), d, G *]
+				[* E, IntegerRing()!Trace(E), d, G *]
 			);
 		end if;
 	end for;
@@ -331,26 +330,27 @@ procedure decompose(basis, action, ~primitives)
 	
 	// The code below is messy and suboptimal.
 	
-	// Sort the idempotents by rank. This is to
-	// prevent the situation where a non-primitive
+	// The idempotents array will now be an array of 4-tuples
+	// of the form (E, Tr(E), d, G), where E is an idempotent
+	// matrix, d is the dimension of its corresponding ideal
+	// and G is a Groebner basis for its corresponding ideal.
+	
+	// Sort the idempotents by rank (trace). This is
+	// to prevent the situation where a non-primitive
 	// idempotent splits into an indecomposable
 	// that we haven't added to our dictionary yet.
-	// Since we need a basis for the image when
-	// flattening, use that to determine the rank.
-	Sort(~idempotents, func<I1, I2 | #I1[2] - #I2[2]>);
+	Sort(~idempotents, func<I1, I2 | I1[2] - I2[2]>);
 	
 	// Find the primitive idempotents.
-	// We know the smallest idempotent will be primitive.
-	// Magma is pretty dumb when it comes to universes,
-	// I truly wish this wasn't necessary. Maybe there's
-	// a better way of doing it.
-	total_rank := #idempotents[1][2];
-	primitive_matrices := [
-		Universe([E[1] : E in idempotents]) | idempotents[1][1]
-	];
-	primitives := [
-		Universe([E[2] : E in idempotents]) | idempotents[1][2]
-	];
+	// We know the smallest idempotent, which will be the
+	// first in our idempotents array, will be primitive.
+	total_rank := idempotents[1][2];
+	primitive_matrices := [* idempotents[1][1] *];
+	// Projective modules over polynomial rings are free.
+	// In other words, we can find a basis for the image of E.
+	// The "Image" function in Magma computes the row space.
+	// This basis fully encodes the indecomposable summand.
+	primitives := [* MinimalBasis(Image(Transpose(primitive_matrices[1]))) *];
 	i := 2;
 	Z := ZeroMatrix(R, n);
 	while total_rank lt n do
@@ -370,9 +370,10 @@ procedure decompose(basis, action, ~primitives)
 				end if;
 			end for;
 			if is_primitive then
-				Append(~primitive_matrices, idempotents[i][1]);
-				Append(~primitives, idempotents[i][2]);
-				total_rank +:= #idempotents[i][2];
+				E := idempotents[i][1];
+				Append(~primitive_matrices, E);
+				Append(~primitives, MinimalBasis(Image(Transpose(E))));
+				total_rank +:= idempotents[i][2];
 			end if;
 		else
 			// If the dimension of the ideal is non-zero,
@@ -399,8 +400,8 @@ procedure decompose(basis, action, ~primitives)
 				RadicalDecomposition(I)
 			;
 			if not IsEmpty(D) then
-				_, I := Dimension(D[1]);
-				V := VarietySequence(D[1] + ideal<C | [C.i : i in I]>)[1];
+				_, U := Dimension(D[1]);
+				V := VarietySequence(D[1] + ideal<C | [C.i : i in U]>)[1];
 				E := ChangeRing(M, R,
 					hom<CR -> R |
 						hom<C -> F | V>,
