@@ -10,6 +10,7 @@
 W := CoxeterGroup(GrpMat, "G2");
 // Finite index subgroups of finitely-generated groups are finitely-generated.
 // If you leave WK empty, this will generate the category of Soergel bimodules.
+// Be careful - the program will NOT check if this is a reflection subgroup!
 WK := [[1,2,1], [2,1,2]];
 // Set up the ring R. Note that our field F will not always be the
 // rationals, as W will often be defined over a field extension.
