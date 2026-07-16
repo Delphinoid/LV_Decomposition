@@ -356,7 +356,9 @@ procedure decompose(basis, action, ~primitives)
 	// The "Image" function in Magma computes the row space.
 	// This basis fully encodes the indecomposable summand.
 	primitives := [* MinimalBasis(Image(Transpose(primitive_matrices[1]))) *];
-	i := 2;
+	// If we're beginning with a higher-dimensonal solution, we need
+	// to check if it captures any other primitive idempotents.
+	i := idempotents[1][3] eq 0 select 2 else 1;
 	Z := ZeroMatrix(R, n);
 	while total_rank lt n do
 		// We essentially step through our idempotents from
@@ -759,6 +761,8 @@ function main()
 	Prune(~dictionary_bases);
 	Prune(~dictionary_actions);
 	
+	Write(file, CartanName(W));
+	Write(file, WK);
 	Write(file, dictionary_bases);
 	Write(file, dictionary_actions);
 	Write(file, W_graph);
