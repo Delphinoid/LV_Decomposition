@@ -10,7 +10,6 @@
 W := CoxeterGroup(GrpMat, "G2");
 // Finite index subgroups of finitely-generated groups are finitely-generated.
 // If you leave WK empty, this will generate the category of Soergel bimodules.
-// Be careful - the program will NOT check if this is a reflection subgroup!
 WK := [[1,2,1], [2,1,2]];
 // Set up the ring R. Note that our field F will not always be the
 // rationals, as W will often be defined over a field extension.
@@ -560,6 +559,13 @@ end function;
 //===========//
 // Recursively compute the indecomposable objects layer-by-layer.
 function main()
+	
+	// Before we do anything else, make sure WK is a reflection group.
+	for word in WK do
+		if not IsReflection(&*[W.k : k in word]) then
+			error "The supplied WK is not a reflection group.";
+		end if;
+	end for;
 
 	// Prepare a file to save the results.
 	file := prepare_output();
