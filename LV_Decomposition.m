@@ -14,7 +14,7 @@ WK := [[1,2,1], [2,1,2]];
 // Set up the ring R. Note that our field F will not always be the
 // rationals, as W will often be defined over a field extension.
 F := BaseRing(W);
-R := PolynomialRing(F, Rank(W));
+R := PolynomialRing(F, [2 : i in [1..Rank(W)]]);
 AssignNames(~R, [Sprintf("a_%o", i) : i in [1..Ngens(R)]]);
 // The polynomial reflection_basis[i][j] corresponds to s_i(a_{s_j}).
 // If it's empty, we default to using the geometric representation.
@@ -350,12 +350,7 @@ procedure decompose(basis, action, ~primitives)
 	// We know the smallest idempotent, which will be the
 	// first in our idempotents array, will be primitive.
 	total_rank := idempotents[1][2];
-	primitive_matrices := [* idempotents[1][1] *];
-	// Projective modules over polynomial rings are free.
-	// In other words, we can find a basis for the image of E.
-	// The "Image" function in Magma computes the row space.
-	// This basis fully encodes the indecomposable summand.
-	primitives := [* MinimalBasis(Image(Transpose(primitive_matrices[1]))) *];
+	primitives := [* idempotents[1][1] *];
 	// If we're beginning with a higher-dimensonal solution, we need
 	// to check if it captures any other primitive idempotents.
 	i := idempotents[1][3] eq 0 select 2 else 1;
@@ -367,10 +362,10 @@ procedure decompose(basis, action, ~primitives)
 		if idempotents[i][3] eq 0 then
 			// If the dimension of the ideal is 0, we're on easy street.
 			is_primitive := true;
-			for j := 1 to #primitive_matrices do
+			for j := 1 to #primitives do
 				if
-					primitive_matrices[j]*idempotents[i][1] ne Z or
-					idempotents[i][1]*primitive_matrices[j] ne Z
+					primitives[j]*idempotents[i][1] ne Z or
+					idempotents[i][1]*primitives[j] ne Z
 				then
 					is_primitive := false;
 					break;
@@ -378,8 +373,7 @@ procedure decompose(basis, action, ~primitives)
 			end for;
 			if is_primitive then
 				E := idempotents[i][1];
-				Append(~primitive_matrices, E);
-				Append(~primitives, MinimalBasis(Image(Transpose(E))));
+				Append(~primitives, E);
 				total_rank +:= idempotents[i][2];
 			end if;
 		else
@@ -388,7 +382,7 @@ procedure decompose(basis, action, ~primitives)
 			// solutions may not be primitive with respect
 			// to our initial choice of a primitive ideal.
 			S := idempotents[i][4];
-			for E in primitive_matrices do
+			for E in primitives do
 				S cat:= Eltseq(
 					M*ChangeRing(E, CR,
 						hom<R -> CR | [CR.i : i in [1..Ngens(R)]]>
@@ -411,9 +405,8 @@ procedure decompose(basis, action, ~primitives)
 						[R.i : i in [1..Ngens(R)]]
 					>
 				);
-				Append(~primitive_matrices, E);
-				Append(~primitives, MinimalBasis(Image(Transpose(E))));
-				total_rank +:= #primitives[#primitives];
+				Append(~primitives, E);
+				total_rank +:= IntegerRing()!Trace(E);
 				// We should repeat with this ideal in case it captures
 				// more orthogonal solutions. This should only ever
 				// happen if there is an indecomposable summand with
@@ -428,24 +421,30 @@ end procedure;
 
 // Reduce each rank r idempotent to a graded
 // basis and a list of rxr action matrices.
-function flatten(B, basis, action)
+function flatten(E, basis, action)
+	
+	n := #basis;
 	
 	new_basis := [];
 	new_action := [];
 	
-	// Compute the degrees of the elements of B.
-	for v in B do
-		b := Eltseq(v);
-		// Find the index of the first non-zero entry.
-		i := 1;
-		while i ne #b do
-			if b[i] ne 0 then
+	// Projective modules over polynomial rings are free.
+	// In other words, we can find a basis for the image of E.
+	// Magma (annoyingly) uses row-major order, so we need to
+	// take the transpose all the time.
+	E := Transpose(E);
+	S := MinimalBasis(sub<GradedModule(R, basis) | [E[i] : i in [1..n]]>);
+	B := [];
+	for s in S do
+		for i := 1 to n do
+			if s[i] ne 0 then
+				// Get the column of E corresponding to the basis
+				// vector s[i], as well as its graded degree.
+				Append(~B, E[i]);
+				Append(~new_basis, basis[i]);
 				break;
 			end if;
-			i +:= 1;
-		end while;
-		// Assuming the basis vector is homogeneous, this is good enough.
-		Append(~new_basis, 2*Degree(b[i])+basis[i]);
+		end for;
 	end for;
 	
 	// In principle computing a basis for the image
@@ -681,16 +680,16 @@ function main()
 				new_bases := [* *];
 				new_actions := [* *];
 				if IsEmpty(primitives) then
-					// If we only found the identity idempotent,
+					// If we only found trivial idempotents,
 					// the current module is indecomposable.
 					Append(~new_bases, basis);
 					Append(~new_actions, action);
 				else
 					// Reduce our idempotents to a graded basis and some
 					// rxr action matrices, where r is their rank.
-					for B in primitives do
+					for E in primitives do
 						new_basis, new_action := flatten(
-							B, basis, action
+							E, basis, action
 						);
 						Append(~new_bases, new_basis);
 						Append(~new_actions, new_action);
